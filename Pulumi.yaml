@@ -1,0 +1,9 @@
+name: project-name
+runtime:
+  name: nodejs
+  options:
+    packagemanager: yarn
+config:
+  pulumi:tags:
+    value:
+      pulumi:template: aws-typescript
