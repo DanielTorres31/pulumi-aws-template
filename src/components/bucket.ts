@@ -1,5 +1,6 @@
 import * as aws from "@pulumi/aws";
 import * as pulumi from "@pulumi/pulumi";
+import { getDefaultTags } from "../utils";
 
 export interface BucketComponentConfig {
   readonly name: string;
@@ -38,10 +39,7 @@ export class BucketComponent {
 
     // Create the bucket
     this.bucket = new aws.s3.Bucket(resourceName, {
-      tags: {
-        ...tags,
-        ManagedBy: "Pulumi",
-      },
+      tags: getDefaultTags(prefix, tags),
     });
 
     this.bucketName = this.bucket.id;

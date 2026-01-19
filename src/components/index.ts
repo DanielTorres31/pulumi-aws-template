@@ -5,4 +5,5 @@ export * from "./sqs-event-source-mapping";
 export * from "./event-bridge-rule";
 export * from "./ecs-service";
 export * from "./docker-image";
-
+export * from "./secret";
+export * from "./load-balancer-rule";

@@ -3,6 +3,7 @@ import * as command from "@pulumi/command";
 import * as pulumi from "@pulumi/pulumi";
 import * as path from "path";
 import * as fs from "fs";
+import { getDefaultTags } from "../utils/tags";
 
 export interface LambdaBuildConfig {
     readonly handlerFile: string;
@@ -103,10 +104,7 @@ export class LambdaComponent {
         this.logGroup = new aws.cloudwatch.LogGroup(`${resourceName}-logs`, {
             name: `/aws/lambda/${resourceName}`,
             retentionInDays: logRetentionInDays,
-            tags: {
-                ...tags,
-                ManagedBy: "Pulumi",
-            },
+            tags: getDefaultTags(prefix, tags),
         });
 
         // Create Lambda function
@@ -125,10 +123,7 @@ export class LambdaComponent {
                 memorySize: memorySize,
                 environment: environment,
                 reservedConcurrentExecutions: reservedConcurrentExecutions,
-                tags: {
-                    ...tags,
-                    ManagedBy: "Pulumi",
-                },
+                tags: getDefaultTags(prefix, tags),
             },
             {
                 dependsOn: dependsOn,
@@ -160,7 +155,7 @@ export class LambdaComponent {
         const resourceName = `${prefix}-${name}`;
 
         const role = new aws.iam.Role(`${resourceName}-role`, {
-            name: resourceName ? `${resourceName}-role` : undefined,
+            name: `${resourceName}-role`,
             assumeRolePolicy: pulumi.jsonStringify({
                 Version: "2012-10-17",
                 Statement: [
@@ -173,6 +168,7 @@ export class LambdaComponent {
                     },
                 ],
             }),
+            tags: getDefaultTags(prefix),
         });
 
         // Attach basic Lambda execution policy

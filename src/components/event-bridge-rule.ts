@@ -1,5 +1,6 @@
 import * as aws from "@pulumi/aws";
 import { LambdaComponent } from "./lambda";
+import { getDefaultTags } from "../utils/tags";
 
 export interface EventBridgeRuleConfig {
   readonly name: string;
@@ -35,6 +36,7 @@ export class EventBridgeRule {
       scheduleExpression: scheduleExpression,
       state: enabled ? "ENABLED" : "DISABLED",
       description: description,
+      tags: getDefaultTags(prefix),
     });
 
     // Grant EventBridge permission to invoke Lambda

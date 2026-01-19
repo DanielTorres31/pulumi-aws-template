@@ -1,5 +1,6 @@
 import * as aws from "@pulumi/aws";
 import * as pulumi from "@pulumi/pulumi";
+import { getDefaultTags } from "../utils/tags";
 
 export interface ContainerDefinition {
   readonly name: string;
@@ -15,11 +16,11 @@ export interface ContainerDefinition {
   }>;
   readonly environment?: Array<{
     readonly name: string;
-    readonly value: string;
+    readonly value: string | pulumi.Output<string>;
   }>;
   readonly secrets?: Array<{
     readonly name: string;
-    readonly valueFrom: string;
+    readonly valueFrom: string | pulumi.Output<string>;
   }>;
   readonly logConfiguration?: {
     readonly logDriver: string;
@@ -43,6 +44,7 @@ export interface EcsServiceConfig {
   readonly launchType?: string;
   readonly subnets: pulumi.Input<string[]>;
   readonly securityGroups: pulumi.Input<string[]>;
+  readonly assignPublicIp?: boolean;
   readonly enableExecuteCommand?: boolean;
   readonly healthCheckGracePeriodSeconds?: number;
   readonly loadBalancers?: Array<{
@@ -80,6 +82,7 @@ export class EcsService {
       launchType = "FARGATE",
       subnets,
       securityGroups,
+      assignPublicIp,
       enableExecuteCommand = false,
       healthCheckGracePeriodSeconds,
       loadBalancers,
@@ -124,10 +127,7 @@ export class EcsService {
       executionRoleArn: taskExecutionRoleArn,
       taskRoleArn: taskRoleArn,
       containerDefinitions: containerDefsJson,
-      tags: {
-        ...tags,
-        ManagedBy: "Pulumi",
-      },
+      tags: getDefaultTags(prefix, tags),
     });
 
     this.taskDefinitionArn = this.taskDefinition.arn;
@@ -142,6 +142,9 @@ export class EcsService {
       networkConfiguration: {
         subnets: subnets,
         securityGroups: securityGroups,
+        ...(assignPublicIp !== undefined
+          ? { assignPublicIp: assignPublicIp }
+          : {}),
       },
       enableExecuteCommand: enableExecuteCommand,
       ...(healthCheckGracePeriodSeconds !== undefined
@@ -156,10 +159,7 @@ export class EcsService {
             })),
           }
         : {}),
-      tags: {
-        ...tags,
-        ManagedBy: "Pulumi",
-      },
+      tags: getDefaultTags(prefix, tags),
     };
 
     this.service = new aws.ecs.Service(`${resourceName}-service`, serviceConfig);
@@ -243,6 +243,7 @@ export class EcsService {
           },
         ],
       }),
+      tags: getDefaultTags(prefix),
     });
 
     // Add additional policies if provided

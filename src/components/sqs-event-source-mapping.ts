@@ -1,6 +1,7 @@
 import * as aws from "@pulumi/aws";
 import { LambdaComponent } from "./lambda";
 import { SqsComponent } from "./sqs";
+import { getDefaultTags } from "../utils/tags";
 
 export interface SqsEventSourceMappingConfig {
   readonly name: string;
@@ -48,6 +49,7 @@ export class SqsEventSourceMapping {
         maximumConcurrency: maximumConcurrency,
       },
       enabled: enabled,
+      tags: getDefaultTags(prefix),
     });
   }
 }

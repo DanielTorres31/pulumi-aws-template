@@ -1,5 +1,6 @@
 import * as aws from "@pulumi/aws";
 import * as pulumi from "@pulumi/pulumi";
+import { getDefaultTags } from "../utils/tags";
 
 export interface SqsComponentConfig {
   readonly name: string;
@@ -49,11 +50,7 @@ export class SqsComponent {
         messageRetentionSeconds: messageRetentionSeconds,
         ...(fifo ? { fifoQueue: true } : {}),
         ...(fifo && contentBasedDeduplication ? { contentBasedDeduplication: true } : {}),
-        tags: {
-          ...tags,
-          ManagedBy: "Pulumi",
-          Type: "DeadLetterQueue",
-        },
+        tags: getDefaultTags(prefix, { ...tags, Type: "DeadLetterQueue" }),
       });
 
       this.deadLetterQueueUrl = this.deadLetterQueue.url;
@@ -79,10 +76,7 @@ export class SqsComponent {
       redrivePolicy: redrivePolicy,
       ...(fifo ? { fifoQueue: true } : {}),
       ...(fifo && contentBasedDeduplication ? { contentBasedDeduplication: true } : {}),
-      tags: {
-        ...tags,
-        ManagedBy: "Pulumi",
-      },
+      tags: getDefaultTags(prefix, tags),
     });
 
     this.queueUrl = this.queue.url;
