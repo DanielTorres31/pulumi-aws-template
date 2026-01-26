@@ -115,7 +115,7 @@ export class LambdaComponent {
             resourceName,
             {
                 name: resourceName,
-                handler: handler,
+                handler: finalHandler,
                 runtime: runtime,
                 role: resolvedRoleArn,
                 code: lambdaCode,
@@ -236,7 +236,6 @@ export class LambdaComponent {
         }
 
         const bundleFile = path.join(absBuildDir, "handler.cjs");
-        const zipFile = path.join(absBuildDir, "lambda.zip");
 
         // Build esbuild command
         const tsconfigFlag = fs.existsSync(absTsconfigPath) ? `--tsconfig=${absTsconfigPath}` : "";
@@ -258,21 +257,41 @@ export class LambdaComponent {
             .filter(Boolean)
             .join(" ");
 
-        // Ensure build directory exists and has a placeholder file before Pulumi tries to read it
-        // This prevents the "no such file or directory" error during planning
-        // The placeholder will be replaced by the actual build during deployment
+        // Ensure build directory exists before Pulumi tries to read it
         if (!fs.existsSync(absBuildDir)) {
             fs.mkdirSync(absBuildDir, { recursive: true });
         }
-        // Create a placeholder file so the directory isn't empty when Pulumi computes the hash
-        const placeholderFile = path.join(absBuildDir, ".pulumi-placeholder");
-        if (!fs.existsSync(placeholderFile)) {
-            fs.writeFileSync(placeholderFile, "// Placeholder - will be replaced during build\n");
-        }
+
+        // Metadata file that will be included in the archive
+        // This file contains source file information computed at build time
+        // so the archive hash changes when source files are modified
+        const metadataFile = path.join(absBuildDir, ".source-metadata.json");
+        
+        // Write initial metadata file with current source info so Pulumi can compute initial hash
+        // The build command will update this with fresh info, ensuring it's always current
+        const initialMtime = fs.existsSync(absHandlerFile) 
+            ? fs.statSync(absHandlerFile).mtimeMs.toString() 
+            : Date.now().toString();
+        const initialMetadata = {
+            handlerFile: absHandlerFile,
+            mtime: initialMtime,
+            buildTime: new Date().toISOString(),
+        };
+        fs.writeFileSync(metadataFile, JSON.stringify(initialMetadata, null, 2));
 
         // Build command string with cd to source directory
-        // Note: We only build the bundle file, Pulumi's FileArchive will zip the directory
-        const buildCommandStr = `cd "${absSourceDir}" && mkdir -p "${absBuildDir}" && rm -f "${absBuildDir}"/* && ${esbuildCommand} && echo "Build complete"`;
+        // Remove all files, build, then write metadata file with current source info
+        // The metadata file is computed dynamically in the build command to ensure
+        // it always reflects the current state of source files
+        // This ensures the archive hash changes when source files change
+        const buildCommandStr = `cd "${absSourceDir}" && mkdir -p "${absBuildDir}" && rm -rf "${absBuildDir}"/* "${absBuildDir}"/.[!.]* 2>/dev/null || true && ${esbuildCommand} && SOURCE_MTIME=$(stat -f "%m" "${absHandlerFile}" 2>/dev/null || stat -c "%Y" "${absHandlerFile}" 2>/dev/null || echo "$(date +%s)") && cat > "${metadataFile}" << EOF
+{
+  "handlerFile": "${absHandlerFile}",
+  "mtime": "$SOURCE_MTIME",
+  "buildTime": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+}
+EOF
+echo "Build complete"`;
 
         // Execute build commands using @pulumi/command
         const buildStep = new command.local.Command(
@@ -284,12 +303,14 @@ export class LambdaComponent {
             }
         );
 
-        // Use the build directory as an archive (Pulumi will zip it automatically)
-        // This way Pulumi can compute the hash from the directory structure
-        // and the build command ensures the files exist before Lambda tries to use them
-        // Note: We build to handler.cjs, and Pulumi will zip the directory containing it
+        // Use FileArchive with the build directory
+        // The metadata file (written by build command) ensures the archive hash 
+        // changes when source files change, triggering Lambda updates
+        // The dependsOn ensures the build runs before the archive is read
+        const archive = new pulumi.asset.FileArchive(absBuildDir);
+
         return {
-            code: new pulumi.asset.FileArchive(absBuildDir),
+            code: archive,
             buildCommand: buildStep,
         };
     }
