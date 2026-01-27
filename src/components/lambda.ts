@@ -3,6 +3,7 @@ import * as command from "@pulumi/command";
 import * as pulumi from "@pulumi/pulumi";
 import * as path from "path";
 import * as fs from "fs";
+import * as crypto from "crypto";
 import { getDefaultTags } from "../utils/tags";
 
 export interface LambdaBuildConfig {
@@ -284,22 +285,107 @@ export class LambdaComponent {
         // The metadata file is computed dynamically in the build command to ensure
         // it always reflects the current state of source files
         // This ensures the archive hash changes when source files change
-        const buildCommandStr = `cd "${absSourceDir}" && mkdir -p "${absBuildDir}" && rm -rf "${absBuildDir}"/* "${absBuildDir}"/.[!.]* 2>/dev/null || true && ${esbuildCommand} && SOURCE_MTIME=$(stat -f "%m" "${absHandlerFile}" 2>/dev/null || stat -c "%Y" "${absHandlerFile}" 2>/dev/null || echo "$(date +%s)") && cat > "${metadataFile}" << EOF
+        // Note: The command includes $(date +%s) which ensures it's unique each time it runs
+        const buildCommandStr = `cd "${absSourceDir}" && DEPLOY_TIMESTAMP=$(date +%s) && mkdir -p "${absBuildDir}" && rm -rf "${absBuildDir}"/* "${absBuildDir}"/.[!.]* 2>/dev/null || true && ${esbuildCommand} && SOURCE_MTIME=$(stat -f "%m" "${absHandlerFile}" 2>/dev/null || stat -c "%Y" "${absHandlerFile}" 2>/dev/null || echo "$(date +%s)") && cat > "${metadataFile}" << EOF
 {
   "handlerFile": "${absHandlerFile}",
   "mtime": "$SOURCE_MTIME",
-  "buildTime": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+  "buildTime": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
+  "deployTimestamp": "$DEPLOY_TIMESTAMP"
 }
 EOF
-echo "Build complete"`;
+echo "Build complete at $(date -u +"%Y-%m-%dT%H:%M:%SZ")"`;
+
+        // Compute hash of source file content to use as a trigger
+        // This ensures the build runs when source files change
+        let sourceFileHash: string;
+        if (fs.existsSync(absHandlerFile)) {
+            const fileContent = fs.readFileSync(absHandlerFile, "utf8");
+            sourceFileHash = crypto.createHash("sha256").update(fileContent).digest("hex");
+        } else {
+            sourceFileHash = Date.now().toString();
+        }
+
+        // Get source file modification time as additional trigger
+        const sourceFileMtime = fs.existsSync(absHandlerFile)
+            ? fs.statSync(absHandlerFile).mtimeMs.toString()
+            : Date.now().toString();
+
+        // Include Pulumi project and stack info to ensure unique triggers per stack
+        const stackName = pulumi.getStack();
+        const projectName = pulumi.getProject();
+        const stackIdentifier = `${projectName}-${stackName}`;
+
+        // Compute a hash of the handler's directory to catch changes in dependencies
+        // This helps ensure rebuilds when imported files change
+        let directoryHash: string;
+        try {
+            const handlerDir = path.dirname(absHandlerFile);
+            const files = fs.readdirSync(handlerDir);
+            const relevantFiles = files
+                .filter((f) => typeof f === "string" && (f.endsWith(".ts") || f.endsWith(".js")))
+                .map((f) => {
+                    const filePath = path.join(handlerDir, f as string);
+                    try {
+                        return fs.readFileSync(filePath, "utf8");
+                    } catch {
+                        return "";
+                    }
+                })
+                .join("");
+            directoryHash = crypto.createHash("sha256").update(relevantFiles).digest("hex");
+        } catch {
+            directoryHash = Date.now().toString();
+        }
+
+        // Include esbuild binary modification time to catch dependency updates
+        // This ensures rebuilds when build tools are updated
+        let esbuildMtime: string;
+        try {
+            if (fs.existsSync(esbuildPath)) {
+                esbuildMtime = fs.statSync(esbuildPath).mtimeMs.toString();
+            } else {
+                esbuildMtime = Date.now().toString();
+            }
+        } catch {
+            esbuildMtime = Date.now().toString();
+        }
+
+        // Get current time as a trigger value
+        // Note: This is computed once per Pulumi program execution, so it will be the same
+        // within a single deployment but different across deployments when the program re-runs
+        const deploymentTime = Date.now().toString();
 
         // Execute build commands using @pulumi/command
+        // Multiple triggers ensure the build runs when source files change
+        // The command itself includes a timestamp in the output, ensuring the archive hash changes
+        // To force rebuilds on every deployment, ensure the Pulumi program re-runs (which it does)
+        // and the triggers will be re-evaluated, potentially causing the command to run
         const buildStep = new command.local.Command(
             `${name}-build`,
             {
                 create: buildCommandStr,
                 update: buildCommandStr,
                 delete: `rm -rf "${absBuildDir}"`,
+                triggers: [
+                    // Trigger on source file content changes (most reliable)
+                    sourceFileHash,
+                    // Trigger on source file modification time changes
+                    sourceFileMtime,
+                    // Trigger on directory-level changes (catches dependency changes)
+                    directoryHash,
+                    // Trigger on esbuild binary changes (catches tool updates)
+                    esbuildMtime,
+                    // Include stack identifier for consistency
+                    stackIdentifier,
+                    // Include deployment time (computed at Pulumi runtime)
+                    // This ensures triggers are re-evaluated on each Pulumi run
+                    deploymentTime,
+                ],
+            },
+            {
+                // Use retainOnDelete to keep build artifacts for debugging
+                retainOnDelete: false,
             }
         );
 
