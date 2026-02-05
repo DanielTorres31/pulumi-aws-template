@@ -29,7 +29,7 @@ export class DockerImage {
       dockerfilePath = "Dockerfile",
       contextPath = "../api",
       buildArgs = {},
-      imageTag = "latest",
+      imageTag,
     } = config;
 
     const resourceName = `${prefix}-${name}`;
@@ -42,6 +42,12 @@ export class DockerImage {
     const absDockerfilePath = path.isAbsolute(dockerfilePath)
       ? dockerfilePath
       : path.resolve(absContextPath, dockerfilePath);
+
+    // Generate unique tag if not provided or if "latest" is used
+    // This ensures Pulumi detects changes and creates new task definitions
+    const finalImageTag = imageTag && imageTag !== "latest"
+      ? imageTag
+      : `build-${Date.now()}`;
 
     // Get ECR authentication
     const authToken = aws.ecr.getAuthorizationTokenOutput({
@@ -65,7 +71,7 @@ export class DockerImage {
 
     // Build and push Docker image
     this.image = new docker.Image(resourceName, {
-      imageName: pulumi.interpolate`${ecrRepository.repositoryUrl}:${imageTag}`,
+      imageName: pulumi.interpolate`${ecrRepository.repositoryUrl}:${finalImageTag}`,
       build: {
         context: absContextPath,
         dockerfile: absDockerfilePath,
